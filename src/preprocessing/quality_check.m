@@ -1,5 +1,5 @@
+% Validates image sharpness via Laplacian variance.
 function [isPass, score] = quality_check(img, blurThreshold)
-    % Validates image sharpness via Laplacian variance.
     
     if nargin < 2, blurThreshold = 100.0; end % Baseline sharpness limit
     
