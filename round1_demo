@@ -1,0 +1,380 @@
+%% ============================================================
+%  EXPLAINABLE AI FOR DIABETIC RETINOPATHY SCREENING
+%  ROUND 1 DEMONSTRATION
+%
+%  Input  : Retinal fundus photograph
+%
+%  Output :
+%       - DR Grade 0-4
+%       - Referable DR probability
+%       - Screening decision
+%       - Grad-CAM explanation
+%
+%  IMPORTANT:
+%  This is a research/hackathon prototype.
+%  It is NOT a clinical diagnostic system.
+%% ============================================================
+
+clear;
+clc;
+close all;
+
+%% ============================================================
+% 1. LOAD TRAINED MODEL
+%% ============================================================
+
+modelFile = fullfile( ...
+    pwd, ...
+    'models', ...
+    'dr_pilot_resnet50.mat');
+
+if ~isfile(modelFile)
+
+    error(['Model not found:' newline ...
+           modelFile newline newline ...
+           'Make sure MATLAB current folder is:' newline ...
+           '/Users/aayushi/Desktop/DR_Hackathon/dr_unified_v2']);
+
+end
+
+disp('Loading trained DR model...');
+
+load(modelFile,'netPilot');
+
+net = netPilot;
+
+disp('Model loaded successfully.');
+
+%% ============================================================
+% 2. SELECT RETINAL IMAGE
+%% ============================================================
+
+[fileName,filePath] = uigetfile( ...
+    {'*.jpg;*.jpeg;*.png;*.bmp', ...
+     'Retinal Images (*.jpg, *.jpeg, *.png, *.bmp)'}, ...
+     'Select a retinal fundus photograph');
+
+if isequal(fileName,0)
+
+    disp('No image selected.');
+    return;
+
+end
+
+imageFile = fullfile(filePath,fileName);
+
+I = imread(imageFile);
+
+disp(['Image selected: ' imageFile]);
+
+%% ============================================================
+% 3. MAKE IMAGE RGB
+%% ============================================================
+
+if ndims(I) == 2
+
+    I = repmat(I,[1 1 3]);
+
+elseif size(I,3) == 4
+
+    I = I(:,:,1:3);
+
+end
+
+%% ============================================================
+% 4. PREPROCESS IMAGE
+%% ============================================================
+
+inputSize = [224 224 3];
+
+Iresized = imresize(I,inputSize(1:2));
+
+%% ============================================================
+% 5. CLASSIFY RETINAL IMAGE
+%% ============================================================
+
+disp('Running DR classification...');
+
+[label,scores] = classify(net,Iresized);
+
+grade = str2double(string(label));
+
+confidence = max(scores);
+
+%% ============================================================
+% 6. GET PROBABILITIES FOR EACH DR GRADE
+%% ============================================================
+
+probGrade0 = scores(1);
+probGrade1 = scores(2);
+probGrade2 = scores(3);
+probGrade3 = scores(4);
+probGrade4 = scores(5);
+
+%% ============================================================
+% 7. REFERABLE DR PROBABILITY
+%
+% Referable DR = Grades 2, 3 and 4
+%% ============================================================
+
+referableProbability = ...
+    probGrade2 + ...
+    probGrade3 + ...
+    probGrade4;
+
+%% ============================================================
+% 8. SCREENING DECISION
+%% ============================================================
+
+if grade >= 2
+
+    referable = true;
+
+else
+
+    referable = false;
+
+end
+
+%% ============================================================
+% 9. GENERATE GRAD-CAM
+%% ============================================================
+
+disp('Generating Grad-CAM explanation...');
+
+try
+
+    scoreMap = gradCAM( ...
+        net, ...
+        Iresized, ...
+        label);
+
+    scoreMap = imresize( ...
+        scoreMap, ...
+        [size(I,1) size(I,2)]);
+
+    gradcamAvailable = true;
+
+catch ME
+
+    warning('Grad-CAM could not be generated.');
+
+    disp(ME.message);
+
+    scoreMap = [];
+
+    gradcamAvailable = false;
+
+end
+
+%% ============================================================
+% 10. CREATE RESULTS WINDOW
+%% ============================================================
+
+figure( ...
+    'Name','AI Diabetic Retinopathy Screening', ...
+    'NumberTitle','off', ...
+    'Color','white', ...
+    'Position',[100 100 1200 650]);
+
+%% ============================================================
+% 11. SHOW ORIGINAL IMAGE
+%% ============================================================
+
+subplot(2,2,1);
+
+imshow(I);
+
+title( ...
+    'Input Retinal Image', ...
+    'FontSize',14, ...
+    'FontWeight','bold');
+
+%% ============================================================
+% 12. SHOW GRAD-CAM
+%% ============================================================
+
+subplot(2,2,2);
+
+if gradcamAvailable
+
+    imshow(I);
+
+    hold on;
+
+    imagesc(scoreMap);
+
+    colormap jet;
+
+    colorbar;
+
+    alphaData = 0.45 * mat2gray(scoreMap);
+
+    h = findobj(gca,'Type','Image');
+
+    if numel(h) >= 2
+
+        h(1).AlphaData = alphaData;
+
+    end
+
+    title( ...
+        'Grad-CAM Explanation', ...
+        'FontSize',14, ...
+        'FontWeight','bold');
+
+    hold off;
+
+else
+
+    imshow(I);
+
+    title( ...
+        'Grad-CAM unavailable', ...
+        'FontSize',14);
+
+end
+
+%% ============================================================
+% 13. SHOW GRADE PROBABILITIES
+%% ============================================================
+
+subplot(2,2,3);
+
+gradeProbabilities = ...
+    [probGrade0 probGrade1 probGrade2 probGrade3 probGrade4];
+
+bar(0:4,gradeProbabilities * 100);
+
+xlabel('DR Grade');
+
+ylabel('Probability (%)');
+
+title( ...
+    'DR Grade Probabilities', ...
+    'FontSize',14, ...
+    'FontWeight','bold');
+
+xticks(0:4);
+
+ylim([0 100]);
+
+grid on;
+
+%% ============================================================
+% 14. SHOW SCREENING RESULT
+%% ============================================================
+
+subplot(2,2,4);
+
+axis off;
+
+text( ...
+    0.05,0.90, ...
+    'AI SCREENING RESULT', ...
+    'FontSize',18, ...
+    'FontWeight','bold');
+
+text( ...
+    0.05,0.76, ...
+    sprintf('Predicted DR Grade: %d',grade), ...
+    'FontSize',15);
+
+text( ...
+    0.05,0.64, ...
+    sprintf('Model Confidence: %.1f%%', ...
+    confidence*100), ...
+    'FontSize',14);
+
+text( ...
+    0.05,0.52, ...
+    sprintf('Referable DR Probability: %.1f%%', ...
+    referableProbability*100), ...
+    'FontSize',14);
+
+if referable
+
+    resultText = 'REFERABLE DR';
+
+    recommendationText = ...
+        'Recommendation: HUMAN REVIEW';
+
+else
+
+    resultText = 'NON-REFERABLE DR';
+
+    recommendationText = ...
+        'Recommendation: ROUTINE FOLLOW-UP';
+
+end
+
+text( ...
+    0.05,0.36, ...
+    resultText, ...
+    'FontSize',17, ...
+    'FontWeight','bold');
+
+text( ...
+    0.05,0.23, ...
+    recommendationText, ...
+    'FontSize',13);
+
+text( ...
+    0.05,0.08, ...
+    'Prototype - not for clinical diagnosis', ...
+    'FontSize',10);
+
+%% ============================================================
+% 15. PRINT RESULTS IN COMMAND WINDOW
+%% ============================================================
+
+fprintf('\n');
+fprintf('================================================\n');
+fprintf('       DIABETIC RETINOPATHY SCREENING\n');
+fprintf('================================================\n');
+
+fprintf('Image: %s\n\n',fileName);
+
+fprintf('Predicted DR Grade: %d\n',grade);
+
+fprintf('Model Confidence: %.2f%%\n', ...
+    confidence*100);
+
+fprintf('\n');
+
+fprintf('Grade Probabilities:\n');
+
+fprintf('  Grade 0: %.2f%%\n',probGrade0*100);
+
+fprintf('  Grade 1: %.2f%%\n',probGrade1*100);
+
+fprintf('  Grade 2: %.2f%%\n',probGrade2*100);
+
+fprintf('  Grade 3: %.2f%%\n',probGrade3*100);
+
+fprintf('  Grade 4: %.2f%%\n',probGrade4*100);
+
+fprintf('\n');
+
+fprintf('Referable DR Probability: %.2f%%\n', ...
+    referableProbability*100);
+
+fprintf('\n');
+
+if referable
+
+    fprintf('RESULT: REFERABLE DR\n');
+
+    fprintf('ACTION: HUMAN OPHTHALMIC REVIEW\n');
+
+else
+
+    fprintf('RESULT: NON-REFERABLE DR\n');
+
+    fprintf('ACTION: ROUTINE SCREENING / FOLLOW-UP\n');
+
+end
+
+fprintf('================================================\n');
+
+fprintf('\nPrototype analysis complete.\n');
