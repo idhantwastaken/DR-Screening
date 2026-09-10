@@ -1,0 +1,243 @@
+%% ============================================================
+%  EXPLAINABLE AI FOR DIABETIC RETINOPATHY SCREENING
+%  Round 1 Prototype
+%
+%  Input  : Retinal fundus photograph
+%  Output : DR Grade 0-4
+%           Referable DR: YES/NO
+%           Confidence
+%           Grad-CAM explanation
+%
+%  NOTE:
+%  Prototype for hackathon demonstration.
+%  NOT a clinical diagnostic system.
+%% ============================================================
+
+clear;
+clc;
+close all;
+
+%% ------------------------------------------------------------
+% 1. LOAD TRAINED MODEL
+% ------------------------------------------------------------
+
+modelFile = fullfile('models','dr_pilot_resnet50.mat');
+
+if ~isfile(modelFile)
+
+    error(['Trained model not found: ' modelFile ...
+        newline newline ...
+        'First train and save netPilot using:' newline ...
+        '[netPilot,infoPilot] = trainNetwork(...)' newline ...
+        'and then save it in the models folder.']);
+
+end
+
+load(modelFile,'netPilot');
+
+net = netPilot;
+
+disp('-------------------------------------------');
+disp('Diabetic Retinopathy Screening Prototype');
+disp('-------------------------------------------');
+disp('Model loaded successfully.');
+
+%% ------------------------------------------------------------
+% 2. SELECT RETINAL IMAGE
+% ------------------------------------------------------------
+
+[fileName, filePath] = uigetfile( ...
+    {'*.jpg;*.jpeg;*.png;*.bmp', ...
+    'Retinal Images (*.jpg, *.jpeg, *.png, *.bmp)'}, ...
+    'Select a retinal fundus image');
+
+if isequal(fileName,0)
+
+    disp('No image selected.');
+    return;
+
+end
+
+imageFile = fullfile(filePath,fileName);
+
+I = imread(imageFile);
+
+%% ------------------------------------------------------------
+% 3. DISPLAY ORIGINAL IMAGE
+% ------------------------------------------------------------
+
+figure('Name','DR Screening Prototype', ...
+       'NumberTitle','off');
+
+subplot(1,2,1);
+
+imshow(I);
+
+title('Input Retinal Image');
+
+%% ------------------------------------------------------------
+% 4. PREPROCESS IMAGE
+% ------------------------------------------------------------
+
+inputSize = [224 224 3];
+
+% Convert grayscale image to RGB if necessary
+if size(I,3) == 1
+    I = repmat(I,[1 1 3]);
+end
+
+% Resize for ResNet-50
+Iresized = imresize(I,inputSize(1:2));
+
+%% ------------------------------------------------------------
+% 5. CLASSIFY IMAGE
+% ------------------------------------------------------------
+
+[label,scores] = classify(net,Iresized);
+
+% Convert label to numeric DR grade
+grade = str2double(string(label));
+
+% Highest classification confidence
+confidence = max(scores);
+
+%% ------------------------------------------------------------
+% 6. REFERABLE DR DECISION
+% ------------------------------------------------------------
+% Referable DR = Grade 2, 3, or 4
+%
+% IMPORTANT:
+% This is a prototype screening rule.
+% Threshold should eventually be tuned on validation data.
+
+referableProbability = ...
+    scores(3) + scores(4) + scores(5);
+
+if grade >= 2
+    referable = true;
+else
+    referable = false;
+end
+
+%% ------------------------------------------------------------
+% 7. GRAD-CAM EXPLANATION
+% ------------------------------------------------------------
+
+try
+
+    scoreMap = gradCAM(net,Iresized,label);
+
+    % Resize heatmap to original image size
+    scoreMap = imresize(scoreMap,[size(I,1) size(I,2)]);
+
+catch ME
+
+    warning('Grad-CAM could not be generated.');
+    disp(ME.message);
+
+    scoreMap = [];
+
+end
+
+%% ------------------------------------------------------------
+% 8. DISPLAY GRAD-CAM
+% ------------------------------------------------------------
+
+if ~isempty(scoreMap)
+
+    subplot(1,2,2);
+
+    imshow(I);
+
+    hold on;
+
+    imagesc(scoreMap);
+
+    colormap jet;
+    colorbar;
+
+    alphaData = 0.45 * mat2gray(scoreMap);
+
+    h = findobj(gca,'Type','Image');
+
+    if numel(h) >= 2
+        h(1).AlphaData = alphaData;
+    end
+
+    title('Grad-CAM Explanation');
+
+    hold off;
+
+end
+
+%% ------------------------------------------------------------
+% 9. DISPLAY RESULTS
+% ------------------------------------------------------------
+
+fprintf('\n');
+fprintf('============================================\n');
+fprintf('        DR SCREENING RESULT\n');
+fprintf('============================================\n');
+
+fprintf('Image: %s\n',fileName);
+
+fprintf('Predicted DR Grade: %d\n',grade);
+
+fprintf('Classification Confidence: %.2f%%\n', ...
+    confidence*100);
+
+fprintf('Referable DR Probability: %.2f%%\n', ...
+    referableProbability*100);
+
+if referable
+
+    fprintf('\n');
+    fprintf('RESULT: REFERABLE DR\n');
+    fprintf('Recommendation: REFER FOR HUMAN REVIEW\n');
+
+else
+
+    fprintf('\n');
+    fprintf('RESULT: NON-REFERABLE DR\n');
+    fprintf('Recommendation: ROUTINE SCREENING / FOLLOW-UP\n');
+
+end
+
+fprintf('============================================\n');
+
+%% ------------------------------------------------------------
+% 10. SHOW RESULT IN COMMAND WINDOW
+% ------------------------------------------------------------
+
+fprintf('\nDR Severity:\n');
+
+switch grade
+
+    case 0
+        disp('Grade 0 - No Diabetic Retinopathy');
+
+    case 1
+        disp('Grade 1 - Mild Non-Proliferative DR');
+
+    case 2
+        disp('Grade 2 - Moderate Non-Proliferative DR');
+
+    case 3
+        disp('Grade 3 - Severe Non-Proliferative DR');
+
+    case 4
+        disp('Grade 4 - Proliferative DR');
+
+end
+
+fprintf('\n');
+
+if referable
+    disp('⚠ REFERABLE: Human ophthalmic review recommended.');
+else
+    disp('✓ NON-REFERABLE according to prototype rule.');
+end
+
+fprintf('\n');
+
+disp('Prototype analysis complete.');
